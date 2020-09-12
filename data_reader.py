@@ -132,44 +132,35 @@ class Dataset:
     def data_exploration(self):
         # Categorical variables
         limit_ratio = 0.003
-        # for cat_col in self.categoricalColumns:
-        #     plt.figure(figsize=(10.0, 4.8))
-        #     series = self.mainDataFrame[cat_col].value_counts(dropna=False)
-        #     # Trim to fit into a single image, if there are too many categories
-        #     if len(series) > 10:
-        #         total_freq = series.sum()
-        #         trimmed_series = series[series >= int(total_freq * limit_ratio)]
-        #         others_total_freq = series[series < int(total_freq * limit_ratio)].sum()
-        #         columns = [str(x) for x in trimmed_series.index.to_list()]
-        #         values = trimmed_series.values.tolist()
-        #         if len(series[series < int(total_freq * limit_ratio)]) > 0:
-        #             columns.append("{0} others".format(len(series[series < int(total_freq * limit_ratio)])))
-        #             values.append(others_total_freq)
-        #     else:
-        #         columns = [str(x) for x in series.index.to_list()]
-        #         values = series.values.tolist()
-        #     y_pos = np.arange(len(columns))
-        #     plt.bar(y_pos, values, align='center', alpha=0.5)
-        #     fontsize = "7" if "others" in columns[-1] else "12"
-        #     plt.xticks(y_pos, columns, fontsize=fontsize, rotation=45)
-        #     plt.ylabel('Frequency')
-        #     plt.title("Categorical Column:{0}, {1} categories".format(cat_col, len(series)))
-        #     plt.savefig("{0}_bars.png".format(cat_col))
-        #     plt.show()
+        for cat_col in self.categoricalColumns:
+            plt.figure(figsize=(10.0, 4.8))
+            series = self.mainDataFrame[cat_col].value_counts(dropna=False)
+            # Trim to fit into a single image, if there are too many categories
+            if len(series) > 10:
+                total_freq = series.sum()
+                trimmed_series = series[series >= int(total_freq * limit_ratio)]
+                others_total_freq = series[series < int(total_freq * limit_ratio)].sum()
+                columns = [str(x) for x in trimmed_series.index.to_list()]
+                values = trimmed_series.values.tolist()
+                if len(series[series < int(total_freq * limit_ratio)]) > 0:
+                    columns.append("{0} others".format(len(series[series < int(total_freq * limit_ratio)])))
+                    values.append(others_total_freq)
+            else:
+                columns = [str(x) for x in series.index.to_list()]
+                values = series.values.tolist()
+            y_pos = np.arange(len(columns))
+            plt.bar(y_pos, values, align='center', alpha=0.5)
+            fontsize = "7" if "others" in columns[-1] else "12"
+            plt.xticks(y_pos, columns, fontsize=fontsize, rotation=45)
+            plt.ylabel('Frequency')
+            plt.title("Categorical Column:{0}, {1} categories".format(cat_col, len(series)))
+            plt.savefig("{0}_bars.png".format(cat_col))
+            plt.show()
 
         num_columns = []
         num_columns.extend(self.numericalColumns)
         num_columns.extend(self.targetColumns)
         num_columns = set(num_columns)
-        # descriptive_statistics = {
-        #     "min": [],
-        #     "max": [],
-        #     "mean": [],
-        #     "median": [],
-        #     "std": [],
-        #     "% of nan": []}
-        # Descriptive statistics table
-        # plt.figure(figsize=(10.0, 4.8))
         max_bin_count = 50
         very_large_threshold = 10e9
         very_small_threshold = -10e9
@@ -183,10 +174,7 @@ class Dataset:
             bins_ = list(range(min_bin_limit, max_bin_limit + bin_length, bin_length))
             return bins_
 
-        # unit_size = 200
         for num_col in num_columns:
-            # fig, ax = plt.subplots(1, 1, figsize=(10.0, 4.8))
-            # fig, axes = plt.subplots(2, 1, figsize=(10.0, 4.8))
             plt.figure(figsize=(10.0, 4.8))
             series = self.mainDataFrame[num_col]
             descriptive_statistics = {
@@ -212,8 +200,6 @@ class Dataset:
                 title = "Numerical column {0} histogram. Showing %{1:.2f} of data.".format(
                     num_col,
                     100.0 * len(trimmed_series) / len(series))
-
-            # ax = \
             ax = series.hist(bins=bins, grid=False, zorder=2, rwidth=0.9)
             ax.set_title(title)
             vals = ax.get_yticks()
@@ -230,51 +216,7 @@ class Dataset:
                       cellLoc='center',
                       rowLoc='center',
                       loc='upper right')
-
-            # df = pd.DataFrame(descriptive_statistics, index=None)
-            # table(ax, df, loc='upper right', colWidths=[0.15] * len(descriptive_statistics),
-            #       cellLoc="center", fontsize=10)
-            # Descriptive statistics table
-            # df = pd.DataFrame(descriptive_statistics)
-            # df.plot(table=True, ax=ax)
             plt.show()
-            print("X")
-
-            # descriptive_statistics["min"].append(series.min())
-            # descriptive_statistics["max"].append(series.max())
-            # descriptive_statistics["mean"].append(series.mean())
-            # descriptive_statistics["median"].append(series.median())
-            # descriptive_statistics["std"].append(series.std())
-            # descriptive_statistics["% of nan"].append(100.0 * series.isna().sum() / len(series))
-        # ds = pd.DataFrame(descriptive_statistics, index=num_columns)
-        # # ds.plot()
-        # fig = plt.figure(figsize=(10.0, 4.8))
-        # ax = fig.add_subplot(111)
-        # y = [1, 2, 3, 4, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1, 1]
-        # col_labels = ['col1', 'col2', 'col3']
-        # row_labels = ['row1', 'row2', 'row3']
-        # table_vals = [[11, 12, 13], [21, 22, 23], [31, 32, 33]]
-
-        # the_table = plt.table(cellText=ds.values,
-        #                       colWidths=[0.25] * len(ds.columns),
-        #                       rowLabels=ds.index,
-        #                       colLabels=ds.columns,
-        #                       cellLoc='center',
-        #                       rowLoc='center',
-        #                       loc='top')
-        # the_table = plt.table(cellText=table_vals,
-        #                       colWidths=[0.1] * 3,
-        #                       rowLabels=row_labels,
-        #                       colLabels=col_labels,
-        #                       loc='center')
-        # the_table.auto_set_font_size(False)
-        # the_table.set_fontsize(24)
-        # the_table.scale(4, 4)
-        # plt.tick_params(axis='x', which='both', bottom=False, top=False, labelbottom=False)
-        # plt.tick_params(axis='y', which='both', right=False, left=False, labelleft=False)
-        # for pos in ['right', 'top', 'bottom', 'left']:
-        #     plt.gca().spines[pos].set_visible(False)
-        # plt.show()
         print("X")
 
     def prepare_dataset(self):
