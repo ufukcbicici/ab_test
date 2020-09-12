@@ -217,6 +217,7 @@ class Dataset:
                       rowLoc='center',
                       loc='upper right')
             plt.show()
+            plt.savefig("{0}_hist.png".format(num_col))
         print("X")
 
     def prepare_dataset(self):
