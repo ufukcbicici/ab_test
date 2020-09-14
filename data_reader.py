@@ -1,14 +1,19 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from sklearn.compose import ColumnTransformer
 from sklearn.impute import KNNImputer
 from category_encoders import *
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import PowerTransformer
 from sklearn.preprocessing import FunctionTransformer
-
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
+from sklearn.pipeline import Pipeline
 
 # from pandas.plotting import table
+from target_variable_scaler import HistogramScalerKBinsSupportingInf
 
 
 class Dataset:
@@ -45,7 +50,6 @@ class Dataset:
         self.numericalColumns = list([k for k, v in Dataset.column_descriptions.items()
                                       if v[0] == "Numerical" and (v[1] == "Independent Variable" or
                                                                   "Pre-Test" in v[1])])
-        self.numericalColumns.append("n1")
         self.targetColumns = list([k for k, v in Dataset.column_descriptions.items()
                                    if v[0] == "Numerical" and "Post-Test" in v[1]])
         self.targetScaling = target_scaling
@@ -53,7 +57,7 @@ class Dataset:
         self.categoricalEncoders = {}
         self.encodedCategoricalVariables = {}
         self.targetVariables = {}
-        self.independentVariables = {}
+        self.independentVariables = []
         self.variableImputers = {}
         self.trainIndices, self.testIndices = train_test_split(np.arange(self.mainDataFrame.shape[0]),
                                                                test_size=test_ratio)
@@ -98,6 +102,9 @@ class Dataset:
 
         self.categoricalColumns = get_eligible_columns(self.categoricalColumns)
         self.numericalColumns = get_eligible_columns(self.numericalColumns)
+        self.independentVariables = []
+        self.independentVariables.extend(self.categoricalColumns)
+        self.independentVariables.extend(self.numericalColumns)
 
     # We apply encoding to the target variables with "Target Encoding" approach. It both handles nan values and missing
     # values and avoids excessive number of dummy variables created with the 1-to-N one hot encoding method.
@@ -220,11 +227,41 @@ class Dataset:
             plt.show()
         print("X")
 
+    def prepare_dataset_v2(self):
+        X = self.mainDataFrame[self.independentVariables].iloc[self.trainIndices]
+        for target_column in self.targetColumns:
+            y = self.targetVariables[target_column].iloc[self.trainIndices]
+            # 1)
+            # We apply encoding to the target variables with "Target Encoding" approach.
+            # It both handles nan values and missing
+            # values and avoids excessive number of dummy variables created with the 1-to-N one hot encoding method.
+            # 2)
+            # The numerical feature "n10" contains "inf". We cannot process or normalize this value.
+            # We instead are going to quantize it.
+            transformers_list = [
+                ("categorical_target_encoder", TargetEncoder(cols=self.categoricalColumns), self.categoricalColumns),
+                ("n10_discretizer", HistogramScalerKBinsSupportingInf(columns=["n10"], bin_count=5), ["n10"]),
+            ]
+
+            transformer = ColumnTransformer(transformers=transformers_list, remainder="passthrough")
+            pipeline = Pipeline(steps=[
+                ('column_transformer', transformer),
+                ("imputer", KNNImputer(n_neighbors=5, weights="distance"))])
+            pipeline.fit(X=X, y=y)
+
+            X_ = pipeline.transform(self.mainDataFrame[self.independentVariables])
+            assert np.array_equal(X_[:, 0:len(self.categoricalColumns)],
+                                  self.encodedCategoricalVariables[target_column])
+            assert np.array_equal(X_[:, 12:], self.mainDataFrame[
+                ["n{0}".format(idx) for idx in range(1, 15) if idx not in {9, 10, 13, 14}]])
+            print("X")
+
     def prepare_dataset(self):
         self.eliminate_columns()
         self.scale_target_variables()
         self.preprocess_categorical_variables()
-        self.preprocess_numerical_variables()
+        self.prepare_dataset_v2()
+        # self.preprocess_numerical_variables()
 
     # def data_exploration(self):
     #     knn_imputer = KNNImputer(n_neighbors=5)
