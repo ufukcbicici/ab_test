@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.compose import ColumnTransformer
+from sklearn.compose import ColumnTransformer, TransformedTargetRegressor
 from sklearn.impute import KNNImputer
 from category_encoders import *
 from sklearn.model_selection import train_test_split
@@ -217,8 +217,8 @@ class Dataset:
     def get_Xy(self, data_frame, target_column, group_type):
         data_frame = data_frame[data_frame.player_group == group_type]
         X = data_frame[self.independentVariables]
-        y_unscaled = data_frame[target_column]
-        return X, y_unscaled
+        y = data_frame[target_column]
+        return X, y
 
     def prepare_dataset_v2(self):
         self.eliminate_nan_columns()
@@ -228,13 +228,16 @@ class Dataset:
         for target_column in self.targetColumns:
             # y = self.targetVariables[target_column].iloc[self.trainIndices]
             for group_type in group_types:
-                X_group, y_group_unscaled = self.get_Xy(data_frame=train_data, target_column=target_column,
-                                                        group_type=group_type)
+                # Training set
+                X_train, y_train = self.get_Xy(data_frame=train_data, target_column=target_column,
+                                               group_type=group_type)
+                # Test set
+                X_test, y_test = self.get_Xy(data_frame=test_data, target_column=target_column,
+                                             group_type=group_type)
                 # Scale the target variables. We see in data exploration that the target variables have large
                 # standard deviations. To fit the regressor easier, we need to apply an invertible transform to the
                 # corresponding target variables: n13 (post-test engagement time) and n14 (post-test monetization).
-                target_scaler = self.get_target_variable_scaler(target_column=target_column, y=y_group_unscaled)
-                y_group = target_scaler.transform(y_group_unscaled[:, np.newaxis])[:, 0]
+                target_scaler = self.get_target_variable_scaler(target_column=target_column, y=y_train)
                 # 1)
                 # We apply encoding to the target variables with "Target Encoding" approach.
                 # It both handles nan values and missing
@@ -268,22 +271,25 @@ class Dataset:
                     "rdf__bootstrap": [False, True],
                     "rdf__max_depth": [5, 10, 15, 20, 25, 30]
                 }]
+                model = TransformedTargetRegressor(regressor=pipeline, transformer=target_scaler)
                 # Pipeline and Grid Search with K-Fold Cross Validation
-                search = GridSearchCV(pipeline, param_grid, n_jobs=4, cv=10, verbose=10,
+                search = GridSearchCV(model, param_grid, n_jobs=4, cv=10, verbose=10,
                                       scoring=["neg_mean_squared_error", "r2"], refit="neg_mean_squared_error")
-                search.fit(X_group, y_group)
+                search.fit(X_train, y_train)
                 print("**********For target:{0} and group_type:{1}**********".format(target_column, group_type))
                 print("Best parameter (CV score=%0.3f):" % search.best_score_)
                 print(search.best_params_)
-                # Score the test set
-                group_test_data = test_data[test_data.player_group == group_type]
-                X_test_group = group_test_data[self.independentVariables]
-                y_test_group_unscaled = group_test_data[target_column]
-
+                # Score the training and test sets
+                best_model = search.best_estimator_
+                for X_, y_, data_type in zip([X_train, X_test], [y_train, y_test], ["Train", "Test"]):
+                    r2_score = best_model.score(X=X_, y=y_)
+                    y_pred = best_model.predict(X=X_)
+                    mse_ = mean_squared_error(y_, y_pred, squared=False)
+                    print("{0} R2:{1} Train MSE:{2}".format(data_type, r2_score, mse_))
                 # Save all model related objects
                 model_file = open(os.path.join("models", "best_model_target_{0}_group_type_{1}.sav"
                                                .format(target_column, group_type)), "wb")
-                model_dict = {"pipeline": search.best_estimator_, "target_scaler": target_scaler}
+                model_dict = {"model": best_model}
                 pickle.dump(model_dict, model_file)
                 model_file.close()
                 print("X")
