@@ -269,7 +269,7 @@ class Dataset:
                     "pca__n_components": [5, 10, None],  # [3, 5, 7, 10, 15, 20, None],
                     "rdf__n_estimators": [50, 100, 250],  # [100, 250, 500, 1000, 5000, 10000],
                     "rdf__bootstrap": [False, True],
-                    "rdf__max_depth": [5, 10, 15, 20, 25, 30]
+                    "rdf__max_depth": [10, 20, 30]
                 }]
                 # Pipeline and Grid Search with K-Fold Cross Validation
                 search = GridSearchCV(pipeline, param_grid, n_jobs=8, cv=10, verbose=10,
