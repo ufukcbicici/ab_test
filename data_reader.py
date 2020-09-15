@@ -14,7 +14,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.decomposition import PCA
 import os
 import pickle
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, r2_score
 
 # from pandas.plotting import table
 from target_variable_scaler import HistogramScalerKBinsSupportingInf
@@ -271,25 +271,29 @@ class Dataset:
                     "rdf__bootstrap": [False, True],
                     "rdf__max_depth": [5, 10, 15, 20, 25, 30]
                 }]
-                model = TransformedTargetRegressor(regressor=pipeline, transformer=target_scaler)
                 # Pipeline and Grid Search with K-Fold Cross Validation
-                search = GridSearchCV(model, param_grid, n_jobs=4, cv=10, verbose=10,
+                search = GridSearchCV(pipeline, param_grid, n_jobs=8, cv=10, verbose=10,
                                       scoring=["neg_mean_squared_error", "r2"], refit="neg_mean_squared_error")
-                search.fit(X_train, y_train)
+                search.fit(X_train, target_scaler.transform(y_train[:, np.newaxis])[:, 0])
                 print("**********For target:{0} and group_type:{1}**********".format(target_column, group_type))
                 print("Best parameter (CV score=%0.3f):" % search.best_score_)
                 print(search.best_params_)
                 # Score the training and test sets
                 best_model = search.best_estimator_
-                for X_, y_, data_type in zip([X_train, X_test], [y_train, y_test], ["Train", "Test"]):
-                    r2_score = best_model.score(X=X_, y=y_)
-                    y_pred = best_model.predict(X=X_)
-                    mse_ = mean_squared_error(y_, y_pred, squared=False)
-                    print("{0} R2:{1} Train MSE:{2}".format(data_type, r2_score, mse_))
+                for X_, y_unscaled, data_type in zip([X_train, X_test], [y_train, y_test], ["Train", "Test"]):
+                    y_scaled = target_scaler.transform(y_unscaled[:, np.newaxis])[:, 0]
+                    y_pred_scaled = best_model.predict(X=X_)
+                    y_pred_unscaled = target_scaler.inverse_transform(y_pred_scaled[:, np.newaxis])[:, 0]
+                    r2_scaled = r2_score(y_true=y_scaled, y_pred=y_pred_scaled)
+                    mse_scaled = mean_squared_error(y_true=y_scaled, y_pred=y_pred_scaled, squared=False)
+                    r2_unscaled = r2_score(y_true=y_unscaled, y_pred=y_pred_unscaled)
+                    mse_unscaled = mean_squared_error(y_true=y_unscaled, y_pred=y_pred_unscaled, squared=False)
+                    print("{0} Scaled R2:{1} Scaled MSE:{2} Unscaled R2:{3} Unscaled MSE:{4}".format(
+                        data_type, r2_scaled, mse_scaled, r2_unscaled, mse_unscaled))
                 # Save all model related objects
                 model_file = open(os.path.join("models", "best_model_target_{0}_group_type_{1}.sav"
                                                .format(target_column, group_type)), "wb")
-                model_dict = {"model": best_model}
+                model_dict = {"model": best_model, "target_scaler": target_scaler}
                 pickle.dump(model_dict, model_file)
                 model_file.close()
                 print("X")
