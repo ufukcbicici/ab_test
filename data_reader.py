@@ -8,9 +8,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import PowerTransformer
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import GridSearchCV, RepeatedStratifiedKFold
 from sklearn.pipeline import Pipeline
+from sklearn.decomposition import PCA
+import os
+import pickle
+from sklearn.metrics import mean_squared_error
 
 # from pandas.plotting import table
 from target_variable_scaler import HistogramScalerKBinsSupportingInf
@@ -43,10 +47,11 @@ class Dataset:
     }
 
     def __init__(self, filename, target_scaling, nan_elemination_ratio=0.5, test_ratio=0.1):
+        # Set numpy framework such that train/test split is repeatable
+        np.random.seed(42)
         self.mainDataFrame = pd.read_csv(filename)
         self.categoricalColumns = list([k for k, v in Dataset.column_descriptions.items()
-                                        if v[0] == "Categorical" and (v[1] == "Independent Variable" or
-                                                                      v[1] == "Group Type")])
+                                        if v[0] == "Categorical" and v[1] == "Independent Variable"])
         self.numericalColumns = list([k for k, v in Dataset.column_descriptions.items()
                                       if v[0] == "Numerical" and (v[1] == "Independent Variable" or
                                                                   "Pre-Test" in v[1])])
@@ -59,34 +64,46 @@ class Dataset:
         self.targetVariables = {}
         self.independentVariables = []
         self.variableImputers = {}
-        self.trainIndices, self.testIndices = train_test_split(np.arange(self.mainDataFrame.shape[0]),
-                                                               test_size=test_ratio)
+        self.trainIndices = None
+        self.testIndices = None
         self.nanEliminationRatio = nan_elemination_ratio
+        # Load or create train / test indices
+        file_path = os.path.join("models", "train_test_indices.sav")
+        if os.path.isfile(file_path):
+            f = open(file_path, "rb")
+            indices_dict = pickle.load(f)
+            self.trainIndices = indices_dict["train"]
+            self.testIndices = indices_dict["test"]
+            f.close()
+        else:
+            self.trainIndices, self.testIndices = train_test_split(np.arange(self.mainDataFrame.shape[0]),
+                                                                   test_size=test_ratio)
+            indices_dict = {"train": self.trainIndices, "test": self.testIndices}
+            f = open(file_path, "wb")
+            pickle.dump(indices_dict, f)
+            f.close()
 
-    def scale_target_variables(self):
-        for target_column in self.targetColumns:
-            assert target_column in self.targetScaling
-            scaler_type = self.targetScaling[target_column]
-            if scaler_type == "identity":
-                scaler = FunctionTransformer()
-            elif scaler_type == "log":
-                scaler = FunctionTransformer(func=np.log, inverse_func=np.exp)
-            # Power Transform
-            else:
-                scaler = PowerTransformer()
-            # Fit on the training samples
-            _y = self.mainDataFrame[target_column].iloc[self.trainIndices]
-            scaler.fit(_y[:, np.newaxis])
-            # Be sure that the inverse transform works as expected
-            _y_transformed = pd.Series(scaler.transform(self.mainDataFrame[target_column][:, np.newaxis])[:, 0])
-            _y_back = scaler.inverse_transform(_y_transformed[:, np.newaxis])[:, 0]
-            assert np.allclose(self.mainDataFrame[target_column], _y_back)
-            # Scale all target variables; save them and the scaler
-            self.targetVariables[target_column] = _y_transformed
-            self.targetScalers[target_column] = scaler
+    def get_target_variable_scaler(self, target_column, y):
+        assert target_column in self.targetScaling
+        scaler_type = self.targetScaling[target_column]
+        if scaler_type == "identity":
+            scaler = FunctionTransformer()
+        elif scaler_type == "log":
+            scaler = FunctionTransformer(func=np.log, inverse_func=np.exp)
+        # Power Transform
+        else:
+            scaler = PowerTransformer()
+        # Fit the scaler
+        scaler.fit(y[:, np.newaxis])
+        # Be sure that the inverse transform works as expected
+        _y_transformed = pd.Series(scaler.transform(self.mainDataFrame[target_column][:, np.newaxis])[:, 0])
+        _y_back = scaler.inverse_transform(_y_transformed[:, np.newaxis])[:, 0]
+        assert np.allclose(self.mainDataFrame[target_column], _y_back)
+        self.targetScalers[target_column] = scaler
+        return scaler
 
     # If a column has more than #nan/elem_count ratio than self.nanEleminationRatio, exclude it from further processing
-    def eliminate_columns(self):
+    def eliminate_nan_columns(self):
         def get_eligible_columns(col_list):
             eligible_columns = []
             for col_name in col_list:
@@ -105,36 +122,6 @@ class Dataset:
         self.independentVariables = []
         self.independentVariables.extend(self.categoricalColumns)
         self.independentVariables.extend(self.numericalColumns)
-
-    # We apply encoding to the target variables with "Target Encoding" approach. It both handles nan values and missing
-    # values and avoids excessive number of dummy variables created with the 1-to-N one hot encoding method.
-    def preprocess_categorical_variables(self):
-        categorical_data = self.mainDataFrame[self.categoricalColumns]
-        for target_column in self.targetColumns:
-            target_encoder = TargetEncoder(cols=self.categoricalColumns)
-            _X = categorical_data.iloc[self.trainIndices]
-            _y = self.targetVariables[target_column].iloc[self.trainIndices]
-            self.categoricalEncoders[target_column] = target_encoder
-            # Fit on the training samples
-            target_encoder.fit(X=_X, y=_y)
-            # Transform the whole data
-            self.encodedCategoricalVariables[target_column] = target_encoder.transform(X=categorical_data)
-
-    # Before calling this method, we have converted all categorical variables. So technically, we can use the knn-imputer
-    # using all independent variables right now.
-    def preprocess_numerical_variables(self):
-        numerical_variables = self.mainDataFrame[self.numericalColumns]
-        # Use knn-Imputer for any missing data
-        for target_column in self.targetColumns:
-            imputer = KNNImputer(n_neighbors=5, weights="distance")
-            categorical_variables = self.encodedCategoricalVariables[target_column]
-            all_independent_variables = pd.concat([categorical_variables, numerical_variables], axis=1)
-            assert all_independent_variables.shape[0] == self.mainDataFrame.shape[0]
-            # Fit on the training samples
-            imputer.fit(all_independent_variables.iloc[self.trainIndices])
-            # Transform the whole data
-            all_independent_variables = imputer.transform(all_independent_variables)
-            self.independentVariables[target_column] = all_independent_variables
 
     def data_exploration(self):
         # Categorical variables
@@ -227,60 +214,76 @@ class Dataset:
             plt.show()
         print("X")
 
+    def get_Xy(self, data_frame, target_column, group_type):
+        data_frame = data_frame[data_frame.player_group == group_type]
+        X = data_frame[self.independentVariables]
+        y_unscaled = data_frame[target_column]
+        return X, y_unscaled
+
     def prepare_dataset_v2(self):
-        X = self.mainDataFrame[self.independentVariables].iloc[self.trainIndices]
+        self.eliminate_nan_columns()
+        group_types = self.mainDataFrame["player_group"].unique()
+        train_data = self.mainDataFrame.iloc[self.trainIndices]
+        test_data = self.mainDataFrame.iloc[self.testIndices]
         for target_column in self.targetColumns:
-            y = self.targetVariables[target_column].iloc[self.trainIndices]
-            # 1)
-            # We apply encoding to the target variables with "Target Encoding" approach.
-            # It both handles nan values and missing
-            # values and avoids excessive number of dummy variables created with the 1-to-N one hot encoding method.
-            # 2)
-            # The numerical feature "n10" contains "inf". We cannot process or normalize this value.
-            # We instead are going to quantize it.
-            transformers_list = [
-                ("categorical_target_encoder", TargetEncoder(cols=self.categoricalColumns), self.categoricalColumns),
-                ("n10_discretizer", HistogramScalerKBinsSupportingInf(columns=["n10"], bin_count=5), ["n10"]),
-            ]
+            # y = self.targetVariables[target_column].iloc[self.trainIndices]
+            for group_type in group_types:
+                X_group, y_group_unscaled = self.get_Xy(data_frame=train_data, target_column=target_column,
+                                                        group_type=group_type)
+                # Scale the target variables. We see in data exploration that the target variables have large
+                # standard deviations. To fit the regressor easier, we need to apply an invertible transform to the
+                # corresponding target variables: n13 (post-test engagement time) and n14 (post-test monetization).
+                target_scaler = self.get_target_variable_scaler(target_column=target_column, y=y_group_unscaled)
+                y_group = target_scaler.transform(y_group_unscaled[:, np.newaxis])[:, 0]
+                # 1)
+                # We apply encoding to the target variables with "Target Encoding" approach.
+                # It both handles nan values and missing
+                # values and avoids excessive number of dummy variables created with the 1-to-N one hot encoding method.
+                # 2)
+                # The numerical feature "n10" contains "inf". We cannot process or normalize this value.
+                # We instead are going to quantize it.
+                transformers_list = [
+                    ("categorical_target_encoder",
+                     TargetEncoder(cols=self.categoricalColumns), self.categoricalColumns),
+                    ("n10_discretizer",
+                     HistogramScalerKBinsSupportingInf(columns=["n10"], bin_count=5), ["n10"]),
+                ]
+                transformer = ColumnTransformer(transformers=transformers_list, remainder="passthrough")
+                # For any potential missing value; we apply k-nn imputer (after the column transformer is applied,
+                # all of our data will be numerical).
+                # We are going to then normalize the features and then apply PCA for dimensionality reduction.
+                # We are going to use RandomForestRegressor since it is fast to train compared
+                # to Gradient Boosting Machines with a small compromise on the accuracy.
+                pipeline = Pipeline(steps=[
+                    ("column_transformer", transformer),
+                    ("imputer", KNNImputer(n_neighbors=5, weights="distance")),
+                    ("scaler", StandardScaler()),
+                    ("pca", PCA()),
+                    ("rdf", RandomForestRegressor(n_estimators=100, max_depth=2, random_state=0))
+                ])
+                # Param grid:
+                param_grid = [{
+                    "pca__n_components": [5, 10, None],  # [3, 5, 7, 10, 15, 20, None],
+                    "rdf__n_estimators": [50, 100, 250],  # [100, 250, 500, 1000, 5000, 10000],
+                    "rdf__bootstrap": [False, True],
+                    "rdf__max_depth": [5, 10, 15, 20, 25, 30]
+                }]
+                # Pipeline and Grid Search with K-Fold Cross Validation
+                search = GridSearchCV(pipeline, param_grid, n_jobs=4, cv=10, verbose=10,
+                                      scoring=["neg_mean_squared_error", "r2"], refit="neg_mean_squared_error")
+                search.fit(X_group, y_group)
+                print("**********For target:{0} and group_type:{1}**********".format(target_column, group_type))
+                print("Best parameter (CV score=%0.3f):" % search.best_score_)
+                print(search.best_params_)
+                # Score the test set
+                group_test_data = test_data[test_data.player_group == group_type]
+                X_test_group = group_test_data[self.independentVariables]
+                y_test_group_unscaled = group_test_data[target_column]
 
-            transformer = ColumnTransformer(transformers=transformers_list, remainder="passthrough")
-            pipeline = Pipeline(steps=[
-                ('column_transformer', transformer),
-                ("imputer", KNNImputer(n_neighbors=5, weights="distance"))])
-            pipeline.fit(X=X, y=y)
-
-            X_ = pipeline.transform(self.mainDataFrame[self.independentVariables])
-            assert np.array_equal(X_[:, 0:len(self.categoricalColumns)],
-                                  self.encodedCategoricalVariables[target_column])
-            assert np.array_equal(X_[:, 12:], self.mainDataFrame[
-                ["n{0}".format(idx) for idx in range(1, 15) if idx not in {9, 10, 13, 14}]])
-            print("X")
-
-    def prepare_dataset(self):
-        self.eliminate_columns()
-        self.scale_target_variables()
-        self.preprocess_categorical_variables()
-        self.prepare_dataset_v2()
-        # self.preprocess_numerical_variables()
-
-    # def data_exploration(self):
-    #     knn_imputer = KNNImputer(n_neighbors=5)
-    #     target_encoder = enc = TargetEncoder(cols=self.categoricalColumns)
-    #     categorical_data = self.mainDataFrame[self.categoricalColumns]
-    #     # fitted_data = knn_imputer.fit_transform(categorical_data)
-    #     encoded_data = target_encoder.fit_transform(X=categorical_data, y=self.mainDataFrame["n13"])
-    #     # encoded_data_2 = target_encoder.transform(X=[""])
-    #     print("X")
-
-    # for col in self.mainDataFrame.columns:
-    #     assert col in Dataset.column_descriptions
-    #     col_properties = Dataset.column_descriptions[col]
-    #     col_type = col_properties[0]
-    #     col_description = col_properties[1]
-    #     if col_description == "Index":
-    #         continue
-    #     if col_type == "Categorical":
-    #         categorical_value_distribution = self.mainDataFrame[col].value_counts(dropna=False)
-    #         categorical_value_distribution.plot(kind='bar')
-    #         plt.show()
-    #         print("X")
+                # Save all model related objects
+                model_file = open(os.path.join("models", "best_model_target_{0}_group_type_{1}.sav"
+                                               .format(target_column, group_type)), "wb")
+                model_dict = {"pipeline": search.best_estimator_, "target_scaler": target_scaler}
+                pickle.dump(model_dict, model_file)
+                model_file.close()
+                print("X")
