@@ -1,7 +1,9 @@
 from dataset import Dataset
-from recommender_unified_groups import RecommenderUnifiedGroups
+
 
 import argparse
+
+from recommender import Recommender
 
 
 def parse_args():
@@ -23,7 +25,7 @@ def parse_args():
 if __name__ == "__main__":
     target_scaling = {"n13": "power", "n14": "log"}
     dataset = Dataset("toydata_mltest.csv")
-    recommender = RecommenderUnifiedGroups(dataset=dataset, target_scaling=target_scaling)
+    recommender = Recommender(dataset=dataset, target_scaling=target_scaling)
     recommender.load_models()
 
     opts = parse_args()
