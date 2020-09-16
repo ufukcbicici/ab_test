@@ -24,6 +24,7 @@ class RecommenderUnifiedGroups(Recommender):
     def __init__(self, dataset, target_scaling):
         super().__init__(dataset, target_scaling)
         self.models = {}
+        self.scoreScalers = {}
         # Prepare the dataset
         dataset.categoricalColumns.append("player_group")
         self.dataset.eliminate_nan_columns()
@@ -112,26 +113,38 @@ class RecommenderUnifiedGroups(Recommender):
                                                                                           indices=indices)
                 print("{0} Scaled R2:{1} Scaled MSE:{2} Unscaled R2:{3} Unscaled MSE:{4}".format(
                     data_type, r2_scaled, mse_scaled, r2_unscaled, mse_unscaled))
-            # Save all model related objects
-            model_file = open(os.path.join("models", "unified_best_model_target_{0}_scale{1}.sav".format(
-                target_column, self.targetScaling[target_column])), "wb")
-            model_dict = {"model": best_model, "target_scaler": target_scaler}
-            pickle.dump(model_dict, model_file)
-            model_file.close()
+            # Fit a Z-Scaler to the predictions on the training set.
+            y_predict = target_scaler.inverse_transform(best_model.predict(X=X_train)[:, np.newaxis])
+            score_scaler = StandardScaler()
+            score_scaler.fit(y_predict)
             self.models[target_column] = best_model
+            self.scoreScalers[target_column] = score_scaler
+            self.targetScalers[target_column] = target_scaler
+            file_path = os.path.join("models", "unified_best_model_target_{0}_scale_{1}.sav".format(target_column,
+                                                                                                    self.targetScaling[
+                                                                                                        target_column]))
+            self.save_model(file_path=file_path, model=best_model, target_scaler=target_scaler,
+                            score_scaler=score_scaler)
             print("X")
+
+    def save_model(self, file_path, model, target_scaler, score_scaler):
+        model_file = open(file_path, "wb")
+        model_dict = {"model": model, "target_scaler": target_scaler, "score_scaler": score_scaler}
+        pickle.dump(model_dict, model_file)
+        model_file.close()
 
     def load_models(self):
         for target_column in self.dataset.targetColumns:
             file_path = os.path.join("models",
-                                     "unified_best_model_target_{0}_scale{1}.sav".format(target_column,
-                                                                                         self.targetScaling[
-                                                                                             target_column]))
+                                     "unified_best_model_target_{0}_scale_{1}.sav".format(target_column,
+                                                                                          self.targetScaling[
+                                                                                              target_column]))
             assert os.path.isfile(file_path)
             model_file = open(file_path, "rb")
             model_dict = pickle.load(model_file)
             self.models[target_column] = model_dict["model"]
             self.targetScalers[target_column] = model_dict["target_scaler"]
+            self.scoreScalers[target_column] = model_dict["score_scaler"]
             model_file.close()
 
     def score_data_subset(self, target_column, indices):
