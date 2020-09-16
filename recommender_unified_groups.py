@@ -2,6 +2,7 @@ import os
 import pickle
 
 import numpy as np
+import pandas as pd
 from category_encoders import *
 from sklearn.compose import ColumnTransformer
 from sklearn.decomposition import PCA
@@ -22,7 +23,10 @@ from target_variable_scaler import HistogramScalerKBinsSupportingInf
 class RecommenderUnifiedGroups(Recommender):
     def __init__(self, dataset, target_scaling):
         super().__init__(dataset, target_scaling)
+        self.models = {}
+        # Prepare the dataset
         dataset.categoricalColumns.append("player_group")
+        self.dataset.eliminate_nan_columns()
 
     def get_target_variable_scaler(self, y, target_column, group_type=None):
         assert target_column in self.targetScaling
@@ -44,9 +48,7 @@ class RecommenderUnifiedGroups(Recommender):
         return scaler
 
     def train_regressors(self):
-        self.dataset.eliminate_nan_columns()
         main_data_frame = self.dataset.mainDataFrame.copy(deep=True)
-        group_types = main_data_frame["player_group"].unique()
         train_data = main_data_frame.iloc[self.dataset.trainIndices]
         test_data = main_data_frame.iloc[self.dataset.testIndices]
         # Train two models, for each target variable. Use all samples from both player groups
@@ -92,8 +94,8 @@ class RecommenderUnifiedGroups(Recommender):
             # Param grid:
             param_grid = [{
                 "pca__n_components": [None],  # [3, 5, 7, 10, 15, 20, None],
-                "rdf__n_estimators": [1000],  # [100, 250, 500, 1000, 5000, 10000],
-                "rdf__bootstrap": [False, True],
+                "rdf__n_estimators": [250],  # [100, 250, 500, 1000, 5000, 10000],
+                "rdf__bootstrap": [True],
                 "rdf__max_depth": [10, 20, 30]
             }]
             # Pipeline and Grid Search with K-Fold Cross Validation
@@ -105,14 +107,9 @@ class RecommenderUnifiedGroups(Recommender):
             print(search.best_params_)
             # Score the training and test sets
             best_model = search.best_estimator_
-            for X_, y_unscaled, data_type in zip([X_train, X_test], [y_train, y_test], ["Train", "Test"]):
-                y_scaled = target_scaler.transform(y_unscaled[:, np.newaxis])[:, 0]
-                y_pred_scaled = best_model.predict(X=X_)
-                y_pred_unscaled = target_scaler.inverse_transform(y_pred_scaled[:, np.newaxis])[:, 0]
-                r2_scaled = r2_score(y_true=y_scaled, y_pred=y_pred_scaled)
-                mse_scaled = mean_squared_error(y_true=y_scaled, y_pred=y_pred_scaled, squared=False)
-                r2_unscaled = r2_score(y_true=y_unscaled, y_pred=y_pred_unscaled)
-                mse_unscaled = mean_squared_error(y_true=y_unscaled, y_pred=y_pred_unscaled, squared=False)
+            for indices, data_type in zip([self.dataset.trainIndices, self.dataset.testIndices], ["Train", "Test"]):
+                r2_scaled, r2_unscaled, mse_scaled, mse_unscaled = self.score_data_subset(target_column=target_column,
+                                                                                          indices=indices)
                 print("{0} Scaled R2:{1} Scaled MSE:{2} Unscaled R2:{3} Unscaled MSE:{4}".format(
                     data_type, r2_scaled, mse_scaled, r2_unscaled, mse_unscaled))
             # Save all model related objects
@@ -121,4 +118,51 @@ class RecommenderUnifiedGroups(Recommender):
             model_dict = {"model": best_model, "target_scaler": target_scaler}
             pickle.dump(model_dict, model_file)
             model_file.close()
+            self.models[target_column] = best_model
             print("X")
+
+    def load_models(self):
+        for target_column in self.dataset.targetColumns:
+            file_path = os.path.join("models",
+                                     "unified_best_model_target_{0}_scale{1}.sav".format(target_column,
+                                                                                         self.targetScaling[
+                                                                                             target_column]))
+            assert os.path.isfile(file_path)
+            model_file = open(file_path, "rb")
+            model_dict = pickle.load(model_file)
+            self.models[target_column] = model_dict["model"]
+            self.targetScalers[target_column] = model_dict["target_scaler"]
+            model_file.close()
+
+    def score_data_subset(self, target_column, indices):
+        data_subset = self.dataset.mainDataFrame[indices]
+        X_ = data_subset[self.dataset.independentVariables]
+        y_truth_unscaled = data_subset[target_column]
+        y_truth_scaled = self.targetScalers[target_column].transform(y_truth_unscaled[:, np.newaxis])[:, 0]
+        y_pred_scaled = self.models[target_column].predict(X=X_)
+        y_pred_unscaled = self.targetScalers[target_column].inverse_transform(y_pred_scaled[:, np.newaxis])[:, 0]
+        r2_scaled = r2_score(y_true=y_truth_scaled, y_pred=y_pred_scaled)
+        r2_unscaled = r2_score(y_true=y_truth_unscaled, y_pred=y_pred_unscaled)
+        mse_scaled = mean_squared_error(y_true=y_truth_scaled, y_pred=y_pred_scaled, squared=False)
+        mse_unscaled = mean_squared_error(y_true=y_truth_unscaled, y_pred=y_pred_unscaled, squared=False)
+        return r2_scaled, r2_unscaled, mse_scaled, mse_unscaled
+
+    def score_csv_file(self, csv_file, lambda_):
+        df = pd.read_csv(csv_file)
+        # Assert that the file contains correct columns
+        input_columns = set(df.columns)
+        assert all([col in input_columns for col in self.dataset.independentVariables])
+        # Select all relevant columns
+        X_ = df[self.dataset.independentVariables]
+        groups = ["A", "B"]
+        # Replicate each for, for processing each row with a different player_group
+        X_hat = pd.DataFrame(np.repeat(X_.values, len(groups), axis=0))
+        X_hat.columns = X_.columns
+        X_hat["player_group"] = groups * df.shape[0]
+        y_engagement_pred_scaled = self.models["n13"].predict(X=X_hat)
+        y_money_pred_scaled = self.models["n14"].predict(X=X_hat)
+        y_engagement_pred = self.targetScalers["n13"].inverse_transform(
+            y_engagement_pred_scaled[:, np.newaxis])[:, 0]
+        y_money_pred = self.targetScalers["n14"].inverse_transform(y_money_pred_scaled[:, np.newaxis])[:, 0]
+        scores = lambda_ * y_money_pred + (1.0 - lambda_) * y_engagement_pred
+        X_hat["scores"] = scores

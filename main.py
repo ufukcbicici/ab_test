@@ -13,7 +13,10 @@ if __name__ == "__main__":
     target_scaling = {"n13": "power", "n14": "log"}
     dataset = Dataset("toydata_mltest.csv")
     recommender = RecommenderUnifiedGroups(dataset=dataset, target_scaling=target_scaling)
-    recommender.train_regressors()
+    recommender.load_models()
+    recommender.score_csv_file("toydata_mltest.csv", lambda_=0.5)
+
+    # recommender.train_regressors()
 
 
     # dataset.plot_categorical_variables()
