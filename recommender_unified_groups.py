@@ -194,6 +194,6 @@ class RecommenderUnifiedGroups(Recommender):
         selected_groups = np.where(selection, "B", "A")
         final_df = pd.concat([df, df_list[0], df_list[1]], axis=1)
         final_df["recommended_group"] = selected_groups
-        result_path = csv_file[-4] + "_recommendations.csv"
+        result_path = csv_file[:-4] + "_recommendations.csv"
         final_df.to_csv(result_path, index=False)
         print("X")
