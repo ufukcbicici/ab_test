@@ -144,7 +144,7 @@ class RecommenderUnifiedGroups(Recommender):
             model_dict = pickle.load(model_file)
             self.models[target_column] = model_dict["model"]
             self.targetScalers[target_column] = model_dict["target_scaler"]
-            self.scoreScalers[target_column] = model_dict["score_scaler"]
+            # self.scoreScalers[target_column] = model_dict["score_scaler"]
             model_file.close()
 
     def score_data_subset(self, target_column, indices):
