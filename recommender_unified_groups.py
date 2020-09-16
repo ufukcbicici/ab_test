@@ -144,11 +144,11 @@ class RecommenderUnifiedGroups(Recommender):
             model_dict = pickle.load(model_file)
             self.models[target_column] = model_dict["model"]
             self.targetScalers[target_column] = model_dict["target_scaler"]
-            # self.scoreScalers[target_column] = model_dict["score_scaler"]
+            self.scoreScalers[target_column] = model_dict["score_scaler"]
             model_file.close()
 
     def score_data_subset(self, target_column, indices):
-        data_subset = self.dataset.mainDataFrame[indices]
+        data_subset = self.dataset.mainDataFrame.iloc[indices]
         X_ = data_subset[self.dataset.independentVariables]
         y_truth_unscaled = data_subset[target_column]
         y_truth_scaled = self.targetScalers[target_column].transform(y_truth_unscaled[:, np.newaxis])[:, 0]
@@ -165,17 +165,35 @@ class RecommenderUnifiedGroups(Recommender):
         # Assert that the file contains correct columns
         input_columns = set(df.columns)
         assert all([col in input_columns for col in self.dataset.independentVariables])
-        # Select all relevant columns
-        X_ = df[self.dataset.independentVariables]
-        groups = ["A", "B"]
-        # Replicate each for, for processing each row with a different player_group
-        X_hat = pd.DataFrame(np.repeat(X_.values, len(groups), axis=0))
-        X_hat.columns = X_.columns
-        X_hat["player_group"] = groups * df.shape[0]
-        y_engagement_pred_scaled = self.models["n13"].predict(X=X_hat)
-        y_money_pred_scaled = self.models["n14"].predict(X=X_hat)
-        y_engagement_pred = self.targetScalers["n13"].inverse_transform(
-            y_engagement_pred_scaled[:, np.newaxis])[:, 0]
-        y_money_pred = self.targetScalers["n14"].inverse_transform(y_money_pred_scaled[:, np.newaxis])[:, 0]
-        scores = lambda_ * y_money_pred + (1.0 - lambda_) * y_engagement_pred
-        X_hat["scores"] = scores
+        # Select all relevant columns; create two copies for two groups
+        df_list = []
+        scores_list = []
+        for group in ["A", "B"]:
+            X = df[self.dataset.independentVariables].copy(deep=True)
+            X["player_group"] = group
+            # Predict regression targets, scaled
+            y_engagement_pred_scaled = self.models["n13"].predict(X=X)
+            y_money_pred_scaled = self.models["n14"].predict(X=X)
+            # Unscale regression targets
+            y_engagement_pred = self.targetScalers["n13"].inverse_transform(y_engagement_pred_scaled[:, np.newaxis])
+            y_money_pred = self.targetScalers["n14"].inverse_transform(y_money_pred_scaled[:, np.newaxis])
+            # Scale with a standard Z-Scaler such that both predicted values are in the same scale; so we can mix them
+            # together in a weighted sum.
+            score_engagement = self.scoreScalers["n13"].transform(y_engagement_pred)
+            score_money = self.scoreScalers["n13"].transform(y_money_pred)
+            score = lambda_ * score_engagement + (1.0 - lambda_) * score_money
+            df_x = pd.DataFrame(data=np.concatenate(
+                [score_engagement, score_money, score], axis=1),
+                                columns=["score_engagement_{0}".format(group),
+                                         "score_money_{0}".format(group),
+                                         "score_{0}".format(group)])
+            df_list.append(df_x)
+            scores_list.append(score)
+        score_matrix = np.concatenate(scores_list, axis=1)
+        selection = np.argmax(score_matrix, axis=1).astype(np.bool)
+        selected_groups = np.where(selection, "B", "A")
+        final_df = pd.concat([df, df_list[0], df_list[1]], axis=1)
+        final_df["recommended_group"] = selected_groups
+        result_path = csv_file[-4] + "_recommendations.csv"
+        final_df.to_csv(result_path, index=False)
+        print("X")
