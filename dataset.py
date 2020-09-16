@@ -1,6 +1,7 @@
 import os
 import pickle
-
+from sklearn.ensemble import IsolationForest
+from sklearn.cluster import KMeans
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -190,7 +191,7 @@ class Dataset:
             series = self.mainDataFrame[self.mainDataFrame.player_group == "B"][cat_col].value_counts(dropna=False)
             Dataset.draw_categorical_data_histogram(series=series)
             plt.tight_layout()
-            plt.savefig("{0}_bars.png".format(cat_col))
+            plt.savefig(os.path.join("figures", "{0}_bars.png".format(cat_col)))
             plt.show()
             print("X")
 
@@ -225,10 +226,11 @@ class Dataset:
                                                   max_bin_count=max_bin_count,
                                                   post_fix="(Player Group B)")
             plt.tight_layout()
-            plt.savefig("{0}_hist.png".format(num_col))
+            plt.savefig(os.path.join("figures", "{0}_bars.png".format(num_col)))
             plt.show()
             print("X")
 
     def data_exploration(self):
         self.plot_categorical_variables()
         self.plot_numerical_variables()
+
