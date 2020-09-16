@@ -9,9 +9,12 @@ if __name__ == "__main__":
                       ("n14", "A"): "log",
                       ("n14", "B"): "identity"}
     dataset = Dataset("toydata_mltest.csv")
-    dataset.data_exploration()
-    recommender = Recommender(dataset=dataset, target_scaling=target_scaling)
-    recommender.train_regressors()
+    # dataset.plot_categorical_variables()
+    dataset.plot_numerical_variables()
+
+    # dataset.data_exploration()
+    # recommender = Recommender(dataset=dataset, target_scaling=target_scaling)
+    # recommender.train_regressors()
     # # dataset.data_exploration()
     # # dataset.prepare_dataset_v2()
     # # dataset.data_exploration()
